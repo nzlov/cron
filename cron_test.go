@@ -124,6 +124,39 @@ func TestAddWhileRunningWithDelay(t *testing.T) {
 	}
 }
 
+// Add a job, remove a job, start cron, expect nothing runs.
+func TestRemoveBeforeRunning(t *testing.T) {
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	cron := New()
+	id, _ := cron.AddFunc("* * * * * ?", func() { wg.Done() })
+	cron.Remove(id)
+	cron.Start()
+	defer cron.Stop()
+	select {
+	case <-time.After(OneSecond):
+		// Success, shouldn't run
+	case <-wait(wg):
+		t.FailNow()
+	}
+}
+
+// Start cron, add a job, remove it, expect it doesn't run.
+func TestRemoveWhileRunning(t *testing.T) {
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	cron := New()
+	cron.Start()
+	defer cron.Stop()
+	id, _ := cron.AddFunc("* * * * * ?", func() { wg.Done() })
+	cron.Remove(id)
+	select {
+	case <-time.After(OneSecond):
+	case <-wait(wg):
+		t.FailNow()
+	}
+}
+
 // Test timing with Entries.
 func TestSnapshotEntries(t *testing.T) {
 	wg := &sync.WaitGroup{}
@@ -160,10 +193,14 @@ func TestMultipleEntries(t *testing.T) {
 	cron := New()
 	cron.AddFunc("0 0 0 1 1 ?", func() {})
 	cron.AddFunc("* * * * * ?", func() { wg.Done() })
+	id1, _ := cron.AddFunc("* * * * * ?", func() { t.Fatal() })
+	id2, _ := cron.AddFunc("* * * * * ?", func() { t.Fatal() })
 	cron.AddFunc("0 0 0 31 12 ?", func() {})
 	cron.AddFunc("* * * * * ?", func() { wg.Done() })
 
+	cron.Remove(id1)
 	cron.Start()
+	cron.Remove(id2)
 	defer cron.Stop()
 
 	select {
@@ -282,7 +319,7 @@ func (t testJob) Run() {
 // Test that adding an invalid job spec returns an error
 func TestInvalidJobSpec(t *testing.T) {
 	cron := New()
-	err := cron.AddJob("this will not parse", nil)
+	_, err := cron.AddJob("this will not parse", nil)
 	if err == nil {
 		t.Errorf("expected an error with invalid spec, got nil")
 	}
@@ -394,6 +431,20 @@ func TestJobWithZeroTimeDoesNotRun(t *testing.T) {
 	<-time.After(OneSecond)
 	if calls != 1 {
 		t.Errorf("called %d times, expected 1\n", calls)
+	}
+}
+
+// Tests that named jobs are correctly registered
+func TestNamedJob(t *testing.T) {
+	cron := New()
+	cron.AddNamedFunc("* * * * * *", "job1", func() {})
+	jobs := cron.Entries()
+	count := len(jobs)
+	if count != 1 {
+		t.Errorf("Expected 1 job. Got %d.\n", count)
+	}
+	if jobs[0].Name != "job1" {
+		t.Errorf("Expected job name to be 'job1'. Got %s.\n", jobs[0].Name)
 	}
 }
 
